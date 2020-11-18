@@ -28,7 +28,9 @@ def dummy_data_decorator(test_function):
                 "salary": 90000,
                 "hire_date": datetime.datetime(2010, 2, 10),
                 "is_active": True,
-                "hashed_password": bcrypt.hashpw(b"password", bcrypt.gensalt()),
+                "hashed_password": bcrypt.hashpw(
+                    b"password", bcrypt.gensalt()
+                ),
             },
             {
                 "_id": ObjectId(),
@@ -38,7 +40,9 @@ def dummy_data_decorator(test_function):
                 "salary": 50000,
                 "hire_date": datetime.datetime(2012, 10, 20),
                 "is_active": True,
-                "hashed_password": bcrypt.hashpw(b"correct horse battery staple", bcrypt.gensalt()),
+                "hashed_password": bcrypt.hashpw(
+                    b"correct horse battery staple", bcrypt.gensalt()
+                ),
             }
         ]
 
@@ -55,7 +59,10 @@ def dummy_data_decorator(test_function):
 
         dummy_chain_of_commands = [
             {"user_id": dummy_users[0]["_id"], "chain_of_command":[]},
-            {"user_id": dummy_users[1]["_id"], "chain_of_command":[dummy_users[0]]},
+            {
+                "user_id": dummy_users[1]["_id"],
+                "chain_of_command":[dummy_users[0]["_id"]]
+            },
         ]
 
         for chain_of_command in dummy_chain_of_commands:
@@ -170,3 +177,201 @@ John Smith,jsmith@performyard.com,bjones@performyard.com,80000,07/16/2018
         {"user_id": john["_id"]})
     assert(len(john_chain_of_command["chain_of_command"]) == 1)
     assert(john_chain_of_command["chain_of_command"][0] == brad["_id"])
+
+
+@dummy_data_decorator
+def test_manager_that_is_not_a_user():
+    '''If a manager's email does not match a row that has been encountered
+    so far, we should create a user for that manager. However, if we get to the
+    end of the CSV and we still haven't encountered the manager, return
+    an error.
+    '''
+
+    body = '''Name,Email,Manager,Salary,Hire Date
+John Smith,jsmith@performyard.com,th@performyard.com,80000,07/16/2020
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 1)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 1)
+
+    j = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    manager = db.user.find_one({"normalized_email": "th@performyard.com"})
+    assert(j["manager_id"] == manager["_id"])
+
+    j_chain_of_command = db.chain_of_command.find_one(
+        {"user_id": j["_id"]})
+    assert(len(j_chain_of_command["chain_of_command"]) == 1)
+    assert(j_chain_of_command["chain_of_command"][0] == manager["_id"])
+
+
+@dummy_data_decorator
+def test_updated_row():
+    '''If a row has the same email address as a previous row, then update that
+    user's information with the data on the most recently encountered row.
+    '''
+
+    two_years_from_now = datetime.datetime.now().year + 2
+    body = '''Name,Email,Manager,Salary,Hire Date
+John Smith,jsmith@performyard.com,tharrison@performyard.com,80000,07/16/{year}
+'''.format(year=two_years_from_now)
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 1)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 0)
+
+    ted = db.user.find_one({"normalized_email": "tharrison@performyard.com"})
+    brad = db.user.find_one({"normalized_email": "bjones@performyard.com"})
+
+    # Check the first row.
+    j = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(j["name"] == "John Smith")
+    assert(j["manager_id"] == ted["_id"])
+    assert(j["salary"] == 80000)
+    assert(j["hire_date"] == datetime.datetime(two_years_from_now, 7, 16))
+    assert(not(j["is_active"]))
+
+    # Ted is Johnny's manager, and Brad is Ted's manager.
+    j_chain_of_command = db.chain_of_command.find_one(
+        {"user_id": j["_id"]})
+    assert(len(j_chain_of_command["chain_of_command"]) == 2)
+    ted_and_brad = set([ted["_id"], brad["_id"]])
+    assert(set(j_chain_of_command["chain_of_command"]) == ted_and_brad)
+
+    # Check the second row.
+    body = '''Name,Email,Manager,Salary,Hire Date
+Johnny Smith,jsmith@performyard.com,bjones@performyard.com,80001,07/17/2018
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 0)
+    assert(body["numUpdated"] == 1)
+    assert(len(body["errors"]) == 0)
+
+    j = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(j["name"] == "Johnny Smith")
+    assert(j["manager_id"] == brad["_id"])
+    assert(j["salary"] == 80001)
+    assert(j["hire_date"] == datetime.datetime(2018, 7, 17))
+    assert(j["is_active"])
+
+    j_chain_of_command = db.chain_of_command.find_one(
+        {"user_id": j["_id"]})
+    assert(len(j_chain_of_command["chain_of_command"]) == 1)
+    assert(j_chain_of_command["chain_of_command"][0] == brad["_id"])
+
+
+@dummy_data_decorator
+def test_invalid_name():
+    '''Name is required, so discard all rows without a valid name.'''
+
+    body = '''Name,Email,Manager,Salary,Hire Date
+,jsmith@performyard.com,bjones@performyard.com,80000,07/16/2018
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 0)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 1)
+
+
+@dummy_data_decorator
+def test_invalid_email():
+    body = '''Name,Email,Manager,Salary,Hire Date
+John Smith,jsmithperformyard.com,bjones@performyard.com,80000,07/16/2018
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 0)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 1)
+
+    john = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(john is None)
+
+
+@dummy_data_decorator
+def test_invalid_manager_email():
+    body = '''Name,Email,Manager,Salary,Hire Date
+John Smith,jsmith@performyard.com,bjonesperformyard.com,80000,07/16/2018
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 1)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 1)
+
+    john = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(john["manager_id"] is None)
+
+    # Check that John doesn't have a manager.
+    john_chain_of_command = db.chain_of_command.find_one(
+        {"user_id": john["_id"]})
+    assert(len(john_chain_of_command["chain_of_command"]) == 0)
+
+
+@dummy_data_decorator
+def test_missing_hire_date():
+    '''If hire date is missing from the CSV, assume they are active.'''
+
+    body = '''Name,Email,Manager,Salary
+John Smith,jsmith@performyard.com,tharrison@performyard.com,80000
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 1)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 0)
+
+    j = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(j["is_active"])
+
+
+@dummy_data_decorator
+def test_invalid_hire_date():
+    body = '''Name,Email,Manager,Salary,Hire Date
+John Smith,jsmith@performyard.com,bjones@performyard.com,80000,99/99/2018
+'''
+
+    response = handle_csv_upload(body, {})
+    assert(response["statusCode"] == 200)
+    body = json.loads(response["body"])
+
+    # Check the response counts
+    assert(body["numCreated"] == 1)
+    assert(body["numUpdated"] == 0)
+    assert(len(body["errors"]) == 1)
+
+    john = db.user.find_one({"normalized_email": "jsmith@performyard.com"})
+    assert(john["is_active"])
+    assert(john["hire_date"] is None)

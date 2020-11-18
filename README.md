@@ -31,7 +31,7 @@ The database will contain two collections: "user" and "chain_of_command".  The u
 }
 ```
 
-_id and manager_id fields should be mongo's ObjectId type, name and email should be strings (and emails should be valid emails), salary should be a number, hire_date should be a valid date object, is_active should be a boolean, and hashed_password is binary data representing a password hashed in bcrypt.  The manager_id, salary, and hire_date are not require, however, and may be set to null.  The _id and normalized_email fields have unique indices, so there are guarranteed to be no duplicates.
+_id and manager_id fields should be mongo's ObjectId type, name and email should be strings (and emails should be valid emails), salary should be a number, hire_date should be a valid date object, is_active should be a boolean, and hashed_password is binary data representing a password hashed in bcrypt.  The manager_id, salary, and hire_date are not required, however, and may be set to null.  The _id and normalized_email fields have unique indices, so there are guarranteed to be no duplicates.
 
 The chain_of_command collection contains objects of the form:
 
